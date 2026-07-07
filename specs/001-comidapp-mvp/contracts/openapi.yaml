@@ -1,0 +1,1199 @@
+openapi: 3.1.0
+info:
+  title: ComidApp API
+  version: 1.0.0
+  description: >
+    API REST para ComidApp — plataforma web de pedidos y entrega de comida rápida.
+    Todos los endpoints protegidos requieren token JWT en el header Authorization.
+  contact:
+    name: ComidApp Team
+
+servers:
+  - url: http://localhost:3001/api/v1
+    description: Desarrollo local
+
+tags:
+  - name: Auth
+    description: Registro, login y logout
+  - name: Locales
+    description: Consulta de locales y horarios
+  - name: Menu
+    description: Catálogo de productos por local
+  - name: Carrito
+    description: Gestión del carrito de compras
+  - name: Pedidos
+    description: Creación y seguimiento de pedidos
+  - name: Pagos
+    description: Procesamiento y webhooks de pago
+  - name: Notificaciones
+    description: Suscripción Web Push
+  - name: Usuarios
+    description: Perfil e historial del usuario
+  - name: Admin
+    description: Panel de administración (solo rol ADMIN)
+  - name: Repartidor
+    description: Panel del repartidor (solo rol REPARTIDOR)
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    # ── Enums ────────────────────────────────────────────────────────────────
+    EstadoPedido:
+      type: string
+      enum: [RECIBIDO, EN_PREPARACION, EN_CAMINO, ENTREGADO, CANCELADO]
+
+    MetodoPago:
+      type: string
+      enum: [TARJETA, EFECTIVO]
+
+    EstadoPago:
+      type: string
+      enum: [PENDIENTE, APROBADO, RECHAZADO, REVERTIDO]
+
+    RolUsuario:
+      type: string
+      enum: [CLIENTE, ADMIN, REPARTIDOR]
+
+    # ── Shared ───────────────────────────────────────────────────────────────
+    ErrorResponse:
+      type: object
+      required: [error, mensaje]
+      properties:
+        error:
+          type: string
+          example: VALIDATION_ERROR
+        mensaje:
+          type: string
+          example: El campo email es requerido
+
+    Paginacion:
+      type: object
+      required: [pagina, porPagina, total, totalPaginas]
+      properties:
+        pagina:
+          type: integer
+          minimum: 1
+        porPagina:
+          type: integer
+          example: 10
+        total:
+          type: integer
+        totalPaginas:
+          type: integer
+
+    # ── Usuarios ─────────────────────────────────────────────────────────────
+    UsuarioPublico:
+      type: object
+      properties:
+        id:
+          type: integer
+        nombre:
+          type: string
+        apellido:
+          type: string
+        email:
+          type: string
+          format: email
+        telefono:
+          type: string
+          nullable: true
+        direccionEntrega:
+          type: string
+          nullable: true
+        rol:
+          $ref: '#/components/schemas/RolUsuario'
+
+    # ── Locales ──────────────────────────────────────────────────────────────
+    Local:
+      type: object
+      properties:
+        id:
+          type: integer
+        nombre:
+          type: string
+          example: El Monstruo
+        direccion:
+          type: string
+        barrio:
+          type: string
+        tiempoEstimadoMin:
+          type: integer
+          example: 30
+        abierto:
+          type: boolean
+          description: Indica si el local está dentro de su horario de atención ahora
+
+    HorarioLocal:
+      type: object
+      properties:
+        diaSemana:
+          type: integer
+          minimum: 0
+          maximum: 6
+          description: 0=Domingo, 1=Lunes, ..., 6=Sábado
+        horaApertura:
+          type: string
+          example: "11:00"
+        horaCierre:
+          type: string
+          example: "23:00"
+
+    # ── Productos / Menú ─────────────────────────────────────────────────────
+    ItemMenu:
+      type: object
+      properties:
+        id:
+          type: integer
+          description: ID del item_menu (no del producto)
+        productoId:
+          type: integer
+        nombre:
+          type: string
+        descripcion:
+          type: string
+          nullable: true
+        precio:
+          type: number
+          format: double
+          example: 2500.00
+        disponible:
+          type: boolean
+        imagenUrl:
+          type: string
+          nullable: true
+
+    # ── Carrito ──────────────────────────────────────────────────────────────
+    ItemCarrito:
+      type: object
+      properties:
+        id:
+          type: integer
+        itemMenuId:
+          type: integer
+        nombre:
+          type: string
+        precio:
+          type: number
+          format: double
+        disponible:
+          type: boolean
+          description: false si el producto fue desactivado mientras estaba en el carrito
+        cantidad:
+          type: integer
+          minimum: 1
+        subtotal:
+          type: number
+          format: double
+
+    ResumenCarrito:
+      type: object
+      properties:
+        localId:
+          type: integer
+        localNombre:
+          type: string
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ItemCarrito'
+        subtotal:
+          type: number
+          format: double
+        costoEnvio:
+          type: number
+          format: double
+        total:
+          type: number
+          format: double
+        tieneItemsNoDisponibles:
+          type: boolean
+          description: true si algún item fue desactivado; bloquea la confirmación
+
+    # ── Pedidos ──────────────────────────────────────────────────────────────
+    ItemPedido:
+      type: object
+      properties:
+        productoId:
+          type: integer
+        nombreProducto:
+          type: string
+        precioUnitario:
+          type: number
+          format: double
+        cantidad:
+          type: integer
+        subtotal:
+          type: number
+          format: double
+
+    Pedido:
+      type: object
+      properties:
+        id:
+          type: integer
+        clienteId:
+          type: integer
+        localId:
+          type: integer
+        localNombre:
+          type: string
+        repartidorId:
+          type: integer
+          nullable: true
+        estado:
+          $ref: '#/components/schemas/EstadoPedido'
+        metodoPago:
+          $ref: '#/components/schemas/MetodoPago'
+        precioTotal:
+          type: number
+          format: double
+        costoEnvio:
+          type: number
+          format: double
+        direccionEntrega:
+          type: string
+        fechaCreacion:
+          type: string
+          format: date-time
+        fechaActualizacion:
+          type: string
+          format: date-time
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ItemPedido'
+        pago:
+          $ref: '#/components/schemas/Pago'
+
+    # ── Pagos ────────────────────────────────────────────────────────────────
+    Pago:
+      type: object
+      properties:
+        id:
+          type: integer
+        estado:
+          $ref: '#/components/schemas/EstadoPago'
+        metodo:
+          $ref: '#/components/schemas/MetodoPago'
+        monto:
+          type: number
+          format: double
+        externalPaymentId:
+          type: string
+          nullable: true
+
+paths:
+
+  # ══════════════════════════════════════════════════════════
+  # AUTH
+  # ══════════════════════════════════════════════════════════
+
+  /auth/registro:
+    post:
+      tags: [Auth]
+      summary: Registrar nuevo cliente (FR-001)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [nombre, apellido, email, password]
+              properties:
+                nombre:
+                  type: string
+                  maxLength: 100
+                apellido:
+                  type: string
+                  maxLength: 100
+                email:
+                  type: string
+                  format: email
+                password:
+                  type: string
+                  minLength: 8
+                telefono:
+                  type: string
+                direccionEntrega:
+                  type: string
+      responses:
+        '201':
+          description: Usuario registrado y autenticado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: string
+                  usuario:
+                    $ref: '#/components/schemas/UsuarioPublico'
+        '409':
+          description: Email ya registrado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Validación fallida
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Iniciar sesión (FR-002)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email:
+                  type: string
+                  format: email
+                password:
+                  type: string
+      responses:
+        '200':
+          description: Sesión iniciada
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: string
+                  usuario:
+                    $ref: '#/components/schemas/UsuarioPublico'
+        '401':
+          description: Credenciales incorrectas
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: Cerrar sesión (FR-003)
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Sesión cerrada
+
+  # ══════════════════════════════════════════════════════════
+  # LOCALES
+  # ══════════════════════════════════════════════════════════
+
+  /locales:
+    get:
+      tags: [Locales]
+      summary: Listar los 5 locales con estado de apertura actual (FR-004, FR-033)
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Lista de locales
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Local'
+
+  /locales/{localId}/horarios:
+    get:
+      tags: [Locales]
+      summary: Obtener horarios de atención de un local
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: localId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Horarios del local
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/HorarioLocal'
+        '404':
+          description: Local no encontrado
+
+  # ══════════════════════════════════════════════════════════
+  # MENÚ
+  # ══════════════════════════════════════════════════════════
+
+  /menu/{localId}:
+    get:
+      tags: [Menu]
+      summary: Obtener menú activo de un local (FR-004, FR-005, FR-006)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: localId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Lista de productos disponibles del local
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  local:
+                    $ref: '#/components/schemas/Local'
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ItemMenu'
+        '404':
+          description: Local no encontrado
+
+  /menu/{localId}/disponibilidad:
+    get:
+      tags: [Menu]
+      summary: >
+        Verificar disponibilidad en tiempo real de los items del menú de un local.
+        Usado por el frontend para polling del carrito (FR-007c, FR-011).
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: localId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: itemMenuIds
+          in: query
+          required: true
+          schema:
+            type: string
+          description: IDs separados por coma de los item_menu a verificar
+      responses:
+        '200':
+          description: Estado de disponibilidad por item
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    itemMenuId:
+                      type: integer
+                    disponible:
+                      type: boolean
+                    precio:
+                      type: number
+
+  # ══════════════════════════════════════════════════════════
+  # CARRITO
+  # ══════════════════════════════════════════════════════════
+
+  /carrito:
+    get:
+      tags: [Carrito]
+      summary: Obtener el carrito activo del usuario autenticado (FR-010)
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Carrito activo (puede estar vacío)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResumenCarrito'
+
+  /carrito/items:
+    post:
+      tags: [Carrito]
+      summary: Agregar un ítem al carrito (FR-007, FR-007b)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [itemMenuId, cantidad]
+              properties:
+                itemMenuId:
+                  type: integer
+                cantidad:
+                  type: integer
+                  minimum: 1
+                limpiarCarritoSiOtroLocal:
+                  type: boolean
+                  default: false
+                  description: >
+                    Si true y el item pertenece a otro local, limpia el carrito actual
+                    y comienza uno nuevo. Si false y hay conflicto de local, devuelve 409.
+      responses:
+        '200':
+          description: Carrito actualizado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResumenCarrito'
+        '409':
+          description: El carrito ya contiene items de otro local y limpiarCarritoSiOtroLocal=false
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: LOCAL_CONFLICT
+                  localActual:
+                    $ref: '#/components/schemas/Local'
+                  localNuevo:
+                    $ref: '#/components/schemas/Local'
+
+  /carrito/items/{itemMenuId}:
+    put:
+      tags: [Carrito]
+      summary: Modificar cantidad de un ítem en el carrito (FR-008)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: itemMenuId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [cantidad]
+              properties:
+                cantidad:
+                  type: integer
+                  minimum: 1
+      responses:
+        '200':
+          description: Carrito actualizado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResumenCarrito'
+        '404':
+          description: Item no encontrado en el carrito
+
+    delete:
+      tags: [Carrito]
+      summary: Eliminar un ítem del carrito (FR-009)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: itemMenuId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Carrito actualizado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResumenCarrito'
+
+  /carrito:
+    delete:
+      tags: [Carrito]
+      summary: Vaciar el carrito completo
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Carrito vaciado
+
+  # ══════════════════════════════════════════════════════════
+  # PEDIDOS
+  # ══════════════════════════════════════════════════════════
+
+  /pedidos:
+    post:
+      tags: [Pedidos]
+      summary: Confirmar pedido desde el carrito activo (FR-011, FR-012, FR-013, FR-033)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [metodoPago]
+              properties:
+                metodoPago:
+                  $ref: '#/components/schemas/MetodoPago'
+                direccionEntrega:
+                  type: string
+                  description: Opcional; si no se envía, usa la del perfil del usuario
+      responses:
+        '201':
+          description: Pedido creado con estado RECIBIDO
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  pedido:
+                    $ref: '#/components/schemas/Pedido'
+                  checkoutUrl:
+                    type: string
+                    nullable: true
+                    description: URL de Mercado Pago si metodoPago=TARJETA; null si EFECTIVO
+        '400':
+          description: Carrito vacío, productos no disponibles o local cerrado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    enum: [CARRITO_VACIO, PRODUCTOS_NO_DISPONIBLES, LOCAL_CERRADO]
+                  detalle:
+                    type: string
+                  itemsNoDisponibles:
+                    type: array
+                    items:
+                      type: integer
+                    description: IDs de item_menu no disponibles (solo para PRODUCTOS_NO_DISPONIBLES)
+        '409':
+          description: No hay repartidores disponibles
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /pedidos/{pedidoId}:
+    get:
+      tags: [Pedidos]
+      summary: Obtener detalle de un pedido (FR-019, FR-031)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: pedidoId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Detalle del pedido
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Pedido'
+        '403':
+          description: El usuario no tiene acceso a este pedido
+        '404':
+          description: Pedido no encontrado
+
+  /pedidos/{pedidoId}/estado:
+    patch:
+      tags: [Pedidos]
+      summary: Actualizar estado del pedido (FR-017, FR-030) — repartidor o sistema
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: pedidoId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [nuevoEstado]
+              properties:
+                nuevoEstado:
+                  $ref: '#/components/schemas/EstadoPedido'
+      responses:
+        '200':
+          description: Estado actualizado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Pedido'
+        '400':
+          description: Transición de estado inválida
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: TRANSICION_INVALIDA
+                  estadoActual:
+                    $ref: '#/components/schemas/EstadoPedido'
+                  transicionesValidas:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/EstadoPedido'
+        '403':
+          description: El usuario no tiene permiso para actualizar este pedido
+
+  # ══════════════════════════════════════════════════════════
+  # PAGOS
+  # ══════════════════════════════════════════════════════════
+
+  /pagos/webhook:
+    post:
+      tags: [Pagos]
+      summary: Webhook de Mercado Pago — resultado de transacción (FR-014, FR-017b)
+      description: >
+        Endpoint llamado por Mercado Pago para notificar el resultado del pago.
+        Verifica la firma del webhook (MP_WEBHOOK_SECRET) antes de procesar.
+        Si el pago es APROBADO, avanza el pedido a EN_PREPARACION automáticamente.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Payload estándar de webhook de Mercado Pago
+      responses:
+        '200':
+          description: Webhook procesado
+        '400':
+          description: Firma inválida o payload malformado
+
+  /pagos/{pedidoId}/reintentar:
+    post:
+      tags: [Pagos]
+      summary: Reintentar pago con tarjeta rechazado (FR-014)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: pedidoId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Nueva URL de checkout generada
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  checkoutUrl:
+                    type: string
+        '400':
+          description: El pedido no está en estado válido para reintentar
+
+  # ══════════════════════════════════════════════════════════
+  # NOTIFICACIONES PUSH
+  # ══════════════════════════════════════════════════════════
+
+  /notificaciones/suscribir:
+    post:
+      tags: [Notificaciones]
+      summary: Registrar suscripción Web Push del usuario (FR-018)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [endpoint, keys]
+              properties:
+                endpoint:
+                  type: string
+                keys:
+                  type: object
+                  required: [p256dh, auth]
+                  properties:
+                    p256dh:
+                      type: string
+                    auth:
+                      type: string
+                userAgent:
+                  type: string
+      responses:
+        '201':
+          description: Suscripción registrada
+        '200':
+          description: Suscripción ya existente actualizada
+
+  /notificaciones/desuscribir:
+    delete:
+      tags: [Notificaciones]
+      summary: Eliminar suscripción Web Push
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [endpoint]
+              properties:
+                endpoint:
+                  type: string
+      responses:
+        '204':
+          description: Suscripción eliminada
+
+  /notificaciones/vapid-public-key:
+    get:
+      tags: [Notificaciones]
+      summary: Obtener la clave pública VAPID para el cliente
+      responses:
+        '200':
+          description: Clave pública VAPID
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  publicKey:
+                    type: string
+
+  # ══════════════════════════════════════════════════════════
+  # USUARIOS — PERFIL E HISTORIAL
+  # ══════════════════════════════════════════════════════════
+
+  /usuarios/perfil:
+    get:
+      tags: [Usuarios]
+      summary: Obtener perfil del usuario autenticado (FR-021)
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Perfil del usuario
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UsuarioPublico'
+
+    patch:
+      tags: [Usuarios]
+      summary: Actualizar datos del perfil (FR-021)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                telefono:
+                  type: string
+                direccionEntrega:
+                  type: string
+      responses:
+        '200':
+          description: Perfil actualizado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UsuarioPublico'
+
+  /usuarios/historial:
+    get:
+      tags: [Usuarios]
+      summary: Historial de pedidos del usuario autenticado — paginado 10/página (FR-020)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: pagina
+          in: query
+          schema:
+            type: integer
+            default: 1
+            minimum: 1
+        - name: estado
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/EstadoPedido'
+          description: Filtrar por estado (opcional)
+      responses:
+        '200':
+          description: Historial paginado de pedidos
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  pedidos:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Pedido'
+                  paginacion:
+                    $ref: '#/components/schemas/Paginacion'
+
+  # ══════════════════════════════════════════════════════════
+  # ADMIN — GESTIÓN CATÁLOGO Y USUARIOS
+  # ══════════════════════════════════════════════════════════
+
+  /admin/locales/{localId}/productos:
+    post:
+      tags: [Admin]
+      summary: Agregar producto al menú de un local (FR-025)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: localId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [nombre, precio]
+              properties:
+                nombre:
+                  type: string
+                  maxLength: 200
+                descripcion:
+                  type: string
+                precio:
+                  type: number
+                  minimum: 0
+                imagenUrl:
+                  type: string
+                disponible:
+                  type: boolean
+                  default: true
+      responses:
+        '201':
+          description: Producto agregado al menú del local
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ItemMenu'
+
+  /admin/locales/{localId}/productos/{itemMenuId}:
+    patch:
+      tags: [Admin]
+      summary: Actualizar disponibilidad o precio de un producto en un local (FR-022, FR-023)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: localId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: itemMenuId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                disponible:
+                  type: boolean
+                precio:
+                  type: number
+                  minimum: 0
+      responses:
+        '200':
+          description: Item del menú actualizado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ItemMenu'
+
+    delete:
+      tags: [Admin]
+      summary: Eliminar producto del menú de un local (FR-024)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: localId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: itemMenuId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '204':
+          description: Producto eliminado del menú del local
+
+  /admin/usuarios:
+    get:
+      tags: [Admin]
+      summary: Listar todos los usuarios (FR-027)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: rol
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/RolUsuario'
+        - name: pagina
+          in: query
+          schema:
+            type: integer
+            default: 1
+      responses:
+        '200':
+          description: Lista de usuarios paginada
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  usuarios:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/UsuarioPublico'
+                  paginacion:
+                    $ref: '#/components/schemas/Paginacion'
+
+  /admin/usuarios/repartidor:
+    post:
+      tags: [Admin]
+      summary: Registrar un nuevo repartidor (FR-026)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [nombre, apellido, email]
+              properties:
+                nombre:
+                  type: string
+                apellido:
+                  type: string
+                email:
+                  type: string
+                  format: email
+                telefono:
+                  type: string
+      responses:
+        '201':
+          description: Repartidor registrado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UsuarioPublico'
+        '409':
+          description: Email ya registrado
+
+  /admin/usuarios/{usuarioId}:
+    delete:
+      tags: [Admin]
+      summary: Eliminar usuario del sistema (FR-028)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: usuarioId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '204':
+          description: Usuario eliminado
+        '403':
+          description: No se puede eliminar al propio admin
+
+  # ══════════════════════════════════════════════════════════
+  # REPARTIDOR
+  # ══════════════════════════════════════════════════════════
+
+  /repartidor/pedidos:
+    get:
+      tags: [Repartidor]
+      summary: Listar pedidos asignados al repartidor autenticado (FR-029)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: estado
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/EstadoPedido'
+      responses:
+        '200':
+          description: Pedidos asignados
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Pedido'
+
+  /repartidor/pedidos/{pedidoId}/confirmar-entrega:
+    post:
+      tags: [Repartidor]
+      summary: Confirmar entrega y cobro en efectivo (FR-016, HU7)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: pedidoId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Entrega confirmada; pedido → ENTREGADO; pago → APROBADO
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Pedido'
+        '400':
+          description: El pedido no está en estado EN_CAMINO o el método de pago no es EFECTIVO
+        '403':
+          description: El repartidor no está asignado a este pedido
